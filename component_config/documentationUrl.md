@@ -1,0 +1,1 @@
+https://github.com/keboola/component-ms-dynamics365-business-central.git/blob/master/README.md
