@@ -1,19 +1,55 @@
 {
   "type": "object",
-  "title": "extractor configuration",
+  "title": "Dynamics 365 Business Central Configuration",
   "required": [
-    "print_hello"
+    "connection"
   ],
   "properties": {
-    "print_hello": {
-      "type": "boolean",
-      "title": "Print Hello",
-      "propertyOrder": 1
-    },
-    "debug": {
-      "type": "boolean",
-      "title": "Debug",
-      "propertyOrder": 2
+    "connection": {
+      "type": "object",
+      "title": "Connection",
+      "required": [
+        "tenant_id"
+      ],
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "title": "Tenant ID",
+          "description": "Can be found in https://businesscentral.dynamics.com/<tenant_id>/Production",
+          "propertyOrder": 1
+        },
+        "company_id": {
+          "type": "string",
+          "enum": [],
+          "default": "",
+          "format": "select",
+          "title": "Company ID",
+          "description": "GUID of the company to extract data from",
+          "options": {
+            "async": {
+              "label": "Load companies",
+              "action": "list_companies"
+            }
+          },
+          "propertyOrder": 2
+        },
+        "environment": {
+          "type": "string",
+          "enum": [],
+          "default": "",
+          "format": "select",
+          "title": "Environment",
+          "description": "Business Central environment name (e.g. Production, Sandbox)",
+          "options": {
+            "async": {
+              "label": "Load environments",
+              "action": "list_environments"
+            }
+          },
+          "propertyOrder": 3
+        }
+      },
+      "propertyOrder": 100
     }
   }
 }

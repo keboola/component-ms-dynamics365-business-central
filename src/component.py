@@ -1,95 +1,315 @@
-"""
-Template Component main class.
-
-"""
-
-import csv
+import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from itertools import chain
+from typing import Any
 
-from keboola.component.base import ComponentBase
+from keboola.component.base import ComponentBase, sync_action
 from keboola.component.exceptions import UserException
+from keboola.component.sync_actions import SelectElement
+from keboola.csvwriter import ElasticDictWriter
 
 from configuration import Configuration
+from dynamics_client import (
+    DynamicsAuthenticationError,
+    DynamicsClient,
+    DynamicsClientError,
+    DynamicsRateLimitError,
+)
 
 
 class Component(ComponentBase):
-    """
-    Extends base class for general Python components. Initializes the CommonInterface
-    and performs configuration validation.
-
-    For easier debugging the data folder is picked up by default from `../data` path,
-    relative to working directory.
-
-    If `debug` parameter is present in the `config.json`, the default logger is set to verbose DEBUG mode.
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-    def run(self):
-        """
-        Main execution code
-        """
+        # Mute info logging for sync actions
+        action = self.configuration.action
+        if action and action != "run":
+            logging.getLogger().setLevel(logging.CRITICAL)
 
-        # ####### EXAMPLE TO REMOVE
-        # check for missing configuration parameters
-        params = Configuration(**self.configuration.parameters)
+        self.config: Configuration = Configuration(**self.configuration.parameters)
+        self.state: dict[str, Any] = self._load_state()
+        self.client: DynamicsClient = DynamicsClient(self.config, self.configuration.oauth_credentials, self.state)
 
-        # Access parameters in configuration
-        if params.print_hello:
-            logging.info("Hello World")
+    def run(self) -> None:
+        rows_written, latest_cursor, final_columns = self._extract_rows()
+        self._sync_tokens_if_needed()
+        self._update_row_state(final_columns, latest_cursor)
 
-        # get input table definitions
-        input_tables = self.get_input_tables_definitions()
-        for table in input_tables:
-            logging.info(f"Received input table: {table.name} with path: {table.full_path}")
+        self.write_state_file(self.state)
+        logging.info("Extraction finished. Rows written: %s", rows_written)
 
-        if len(input_tables) == 0:
-            raise UserException("No input tables found")
+    def _sync_tokens_if_needed(self) -> None:
+        if self.client.tokens_changed:
+            self.state["oauth"] = self.client.oauth_state
 
-        # get last state data/in/state.json from previous run
-        previous_state = self.get_state_file()
-        logging.info(previous_state.get("some_parameter"))
+    def _update_row_state(self, columns: list[str], cursor: str | None) -> None:
+        """Update state with last run timestamp, columns, and cursor value."""
+        row_state = self._ensure_row_state()
+        row_state["last_run"] = datetime.now(timezone.utc).isoformat()
 
-        # Create output table (Table definition - just metadata)
-        table = self.create_out_table_definition("output.csv", incremental=True, primary_key=["timestamp"])
+        if columns:
+            row_state["columns"] = columns
+        if self.config.destination.incremental and cursor:
+            row_state["cursor"] = cursor
 
-        # get file path of the table (data/out/tables/Features.csv)
-        out_table_path = table.full_path
-        logging.info(out_table_path)
+    def _load_state(self) -> dict[str, Any]:
+        state = self.get_state_file()
+        return state if isinstance(state, dict) else {}
 
-        # Add timestamp column and save into out_table_path
-        input_table = input_tables[0]
-        with (
-            open(input_table.full_path, "r") as inp_file,
-            open(table.full_path, mode="wt", encoding="utf-8", newline="") as out_file,
-        ):
-            reader = csv.DictReader(inp_file)
+    def _extract_rows(self) -> tuple[int, str | None, list[str]]:
+        """Extract data from endpoint and write to CSV, managing incremental state."""
+        row_state = self._ensure_row_state()
+        previous_columns: list[str] = row_state.get("columns", [])
+        latest_cursor: str | None = row_state.get("cursor")
 
-            columns = list(reader.fieldnames)
-            # append timestamp
-            columns.append("timestamp")
+        incremental_field = (
+            self.config.source.incremental_field or None if self.config.destination.incremental else None
+        )
+        incremental_value = None
+        if incremental_field:
+            incremental_value = latest_cursor or (self.config.source.initial_since or None)
 
-            # write result with column added
-            writer = csv.DictWriter(out_file, fieldnames=columns)
-            writer.writeheader()
-            for in_row in reader:
-                in_row["timestamp"] = datetime.now().isoformat()
-                writer.writerow(in_row)
+        # Keep column order stable across runs by combining historical and preferred fields.
+        preferred_columns = self._merge_columns(
+            self.config.source.selected_columns,
+            self.config.destination.primary_key,
+            [incremental_field] if incremental_field else None,
+        )
 
-        # Save table manifest (output.csv.manifest) from the Table definition
+        logging.info("Starting extraction for endpoint '%s'.", self.config.source.endpoint)
+
+        iterator = self.client.iterate_endpoint(
+            self.config.source.endpoint,
+            include_company_scope=True,
+            selected_columns=self.config.source.selected_columns,
+            filter_expression=self.config.source.filter_expression or None,
+            incremental_field=incremental_field,
+            incremental_value=incremental_value,
+        )
+        records_iter = iter(iterator)
+        first_record = next(records_iter, None)
+
+        first_record_keys = first_record.keys() if first_record else []
+        base_columns = self._merge_columns(previous_columns, preferred_columns, first_record_keys)
+
+        table = self.create_out_table_definition(
+            self.config.destination.table_name or self.config.source.endpoint,
+            incremental=self.config.destination.incremental,
+            primary_key=self.config.destination.primary_key or None,
+            columns=base_columns or None,
+        )
+
+        total_rows = 0
+        has_custom_selection = bool(self.config.source.selected_columns)
+        record_stream = chain([first_record], records_iter) if first_record else records_iter
+
+        with ElasticDictWriter(table.full_path, list(base_columns)) as writer:
+            if writer.fieldnames:
+                writer.writeheader()
+
+            for record in record_stream:
+                latest_cursor = self._process_record(
+                    writer,
+                    record,
+                    preferred_columns,
+                    has_custom_selection,
+                    latest_cursor,
+                )
+                total_rows += 1
+
+            final_columns = list(writer.fieldnames) if writer.fieldnames else []
+
+        if not final_columns:
+            final_columns = self._merge_columns(previous_columns, preferred_columns)
+
+        self._finalise_table(self.config, table, final_columns)
+
+        if total_rows == 0:
+            logging.info("No records returned for endpoint '%s'. Output file left empty.", self.config.source.endpoint)
+        else:
+            logging.info("Finished endpoint '%s'. Rows written: %s.", self.config.source.endpoint, total_rows)
+
+        return total_rows, latest_cursor, final_columns
+
+    def _process_record(
+        self,
+        writer: ElasticDictWriter,
+        record: dict[str, Any],
+        preferred_columns: list[str],
+        restrict_to_selection: bool,
+        current_cursor: str | None,
+    ) -> str | None:
+        """Normalize and write a single record, returning updated cursor value."""
+        normalized = self._normalize_record(record)
+
+        if restrict_to_selection:
+            # Only include selected columns
+            row = {col: normalized.get(col, "") for col in preferred_columns}
+        else:
+            # Include all columns but ensure preferred ones exist for consistency
+            row = normalized
+            for col in preferred_columns:
+                row.setdefault(col, "")
+
+        writer.writerow(row)
+        return self._update_cursor(current_cursor, record)
+
+    def _finalise_table(self, config: Configuration, table, final_columns: list[str]) -> None:
+        existing_columns = set(getattr(table, "column_names", []) or [])
+        for column in final_columns:
+            if column not in existing_columns:
+                table.add_column(column)
+                existing_columns.add(column)
+        if config.destination.primary_key:
+            table.primary_key = list(config.destination.primary_key)
         self.write_manifest(table)
 
-        # Write new state - will be available next run
-        self.write_state_file({"some_state_parameter": "value"})
+    def _ensure_row_state(self) -> dict[str, Any]:
+        return self.state.setdefault("rows", {}).setdefault(self._state_key(), {})
 
-        # ####### EXAMPLE TO REMOVE END
+    def _state_key(self) -> str:
+        return self.config.destination.table_name or self.config.source.endpoint
+
+    @staticmethod
+    def _merge_columns(*sources: list[str] | None) -> list[str]:
+        """Merge multiple column lists into a deduplicated, order-preserving list."""
+        seen: dict[str, None] = {}
+        for source in sources:
+            if source:
+                for col in source:
+                    if col:
+                        seen.setdefault(col, None)
+        return list(seen)
+
+    def _normalize_record(self, record: dict[str, Any]) -> dict[str, str]:
+        """Convert all record values to strings for CSV output."""
+        return {key: self._stringify_value(value) for key, value in record.items()}
+
+    def _stringify_value(self, value: Any) -> str:
+        """
+        Convert any value to a string suitable for CSV output.
+
+        Handles None, datetime objects, dicts/lists (as JSON), and primitives.
+        """
+        match value:
+            case None:
+                return ""
+            case datetime():
+                return value.astimezone(timezone.utc).isoformat()
+            case dict() | list():
+                return json.dumps(value, ensure_ascii=False)
+            case _:
+                return str(value)
+
+    def _update_cursor(self, current: str | None, record: dict[str, Any]) -> str | None:
+        """
+        Extract cursor value from record and return the maximum between current and new.
+
+        Only applies when incremental load is enabled.
+        """
+        if not self.config.destination.incremental:
+            return current
+
+        incremental_field = self.config.source.incremental_field
+        if not incremental_field:
+            return current
+
+        value = record.get(incremental_field)
+        cursor = self._stringify_cursor(value)
+
+        if not cursor:
+            return current
+
+        # Return the latest cursor value
+        return cursor if (current is None or cursor > current) else current
+
+    @staticmethod
+    def _stringify_cursor(value: Any) -> str | None:
+        """Convert cursor value to string, handling datetime and None."""
+        match value:
+            case None:
+                return None
+            case datetime():
+                return value.astimezone(timezone.utc).isoformat()
+            case _:
+                return str(value) or None
+
+    @sync_action("testConnection")
+    def test_connection(self):
+        """Test API connectivity by fetching the list of companies."""
+        try:
+            self.client.list_companies()
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+    @sync_action("list_environments")
+    def list_environments(self):
+        """Fetch available environments for UI dropdown."""
+        try:
+            environments = self.client.list_environments()
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+        return [SelectElement(item.get("name", "")) for item in environments if item.get("name")]
+
+    @sync_action("list_companies")
+    def list_companies(self):
+        """Fetch available companies for UI dropdown."""
+        try:
+            companies = self.client.list_companies()
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+        return [SelectElement(value=item["id"], label=item.get("name") or item["id"]) for item in companies]
+
+    @sync_action("list_endpoints")
+    def list_endpoints(self):
+        """Fetch available API endpoints for UI dropdown."""
+        try:
+            endpoints = self.client.list_endpoints()
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+        return [SelectElement(value=item["name"], label=item.get("label") or item["name"]) for item in endpoints]
+
+    @sync_action("list_columns")
+    def list_columns(self):
+        """Fetch columns for the selected endpoint."""
+        endpoint = self.config.source.endpoint
+        if not endpoint:
+            raise UserException("Select an endpoint before listing columns.")
+
+        try:
+            columns = self.client.list_columns(endpoint)
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+        return [SelectElement(value=col["name"], label=self._column_label(col)) for col in columns]
+
+    @staticmethod
+    def _column_label(column: dict[str, Any]) -> str:
+        """Format column label with optional type annotation."""
+        label = column.get("label") or column["name"]
+        col_type = column.get("type")
+        return f"{label} ({col_type})" if col_type else label
+
+    @staticmethod
+    def _wrap_client_error(error: DynamicsClientError) -> UserException:
+        """Convert API client errors to user-friendly messages."""
+        if isinstance(error, DynamicsAuthenticationError):
+            message = f"Authentication failed: {error}"
+        elif isinstance(error, DynamicsRateLimitError):
+            message = (
+                "Dynamics 365 Business Central throttled the request. "
+                "Consider lowering page size or scheduling runs less frequently."
+            )
+        else:
+            message = str(error)
+
+        return UserException(message)
 
 
-"""
-        Main entrypoint
-"""
 if __name__ == "__main__":
     try:
         comp = Component()
