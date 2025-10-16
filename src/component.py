@@ -98,6 +98,7 @@ class Component(ComponentBase):
             incremental=self.config.destination.incremental,
             primary_key=self.config.destination.primary_key or None,
             columns=base_columns or None,
+            has_header=True,
         )
 
         total_rows = 0
