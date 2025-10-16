@@ -36,8 +36,8 @@ class Destination(BaseModel):
 
 class Configuration(BaseModel):
     connection: Connection
-    source: Source
-    destination: Destination
+    source: Source = Field(default_factory=Source)
+    destination: Destination = Field(default_factory=Destination)
     debug: bool = False
 
     def __init__(self, **data):
