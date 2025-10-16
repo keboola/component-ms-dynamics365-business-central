@@ -368,7 +368,8 @@ class DynamicsClient:
         if self._metadata_cache is not None:
             return self._metadata_cache
 
-        response = self._request("GET", "$metadata")
+        metadata_url = self._build_url("$metadata")
+        response = self._request("GET", metadata_url)
         self._metadata_cache = _parse_odata_metadata(response.text)
         return self._metadata_cache
 
