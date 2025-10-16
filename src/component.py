@@ -32,9 +32,9 @@ class Component(ComponentBase):
         self.client: DynamicsClient = DynamicsClient(self.config, self.configuration.oauth_credentials, self.state)
 
     def run(self) -> None:
-        rows_written, latest_cursor, final_columns = self._extract_rows()
+        rows_written, final_columns = self._extract_rows()
         self._sync_tokens_if_needed()
-        self._update_row_state(final_columns, latest_cursor)
+        self._update_row_state(final_columns)
 
         self.write_state_file(self.state)
         logging.info("Extraction finished. Rows written: %s", rows_written)
@@ -43,32 +43,30 @@ class Component(ComponentBase):
         if self.client.tokens_changed:
             self.state["oauth"] = self.client.oauth_state
 
-    def _update_row_state(self, columns: list[str], cursor: str | None) -> None:
-        """Update state with last run timestamp, columns, and cursor value."""
+    def _update_row_state(self, columns: list[str]) -> None:
+        """Update state with last run timestamp and columns."""
         row_state = self._ensure_row_state()
         row_state["last_run"] = datetime.now(timezone.utc).isoformat()
 
         if columns:
             row_state["columns"] = columns
-        if self.config.destination.incremental and cursor:
-            row_state["cursor"] = cursor
 
     def _load_state(self) -> dict[str, Any]:
         state = self.get_state_file()
         return state if isinstance(state, dict) else {}
 
-    def _extract_rows(self) -> tuple[int, str | None, list[str]]:
+    def _extract_rows(self) -> tuple[int, list[str]]:
         """Extract data from endpoint and write to CSV, managing incremental state."""
         row_state = self._ensure_row_state()
         previous_columns: list[str] = row_state.get("columns", [])
-        latest_cursor: str | None = row_state.get("cursor")
+        last_run: str | None = row_state.get("last_run")
 
         incremental_field = (
             self.config.source.incremental_field or None if self.config.destination.incremental else None
         )
         incremental_value = None
         if incremental_field:
-            incremental_value = latest_cursor or (self.config.source.initial_since or None)
+            incremental_value = last_run or (self.config.source.initial_since or None)
 
         # Keep column order stable across runs by combining historical and preferred fields.
         preferred_columns = self._merge_columns(
@@ -110,12 +108,11 @@ class Component(ComponentBase):
                 writer.writeheader()
 
             for record in record_stream:
-                latest_cursor = self._process_record(
+                self._process_record(
                     writer,
                     record,
                     preferred_columns,
                     has_custom_selection,
-                    latest_cursor,
                 )
                 total_rows += 1
 
@@ -131,7 +128,7 @@ class Component(ComponentBase):
         else:
             logging.info("Finished endpoint '%s'. Rows written: %s.", self.config.source.endpoint, total_rows)
 
-        return total_rows, latest_cursor, final_columns
+        return total_rows, final_columns
 
     def _process_record(
         self,
@@ -139,9 +136,8 @@ class Component(ComponentBase):
         record: dict[str, Any],
         preferred_columns: list[str],
         restrict_to_selection: bool,
-        current_cursor: str | None,
-    ) -> str | None:
-        """Normalize and write a single record, returning updated cursor value."""
+    ) -> None:
+        """Normalize and write a single record."""
         normalized = self._normalize_record(record)
 
         if restrict_to_selection:
@@ -154,7 +150,6 @@ class Component(ComponentBase):
                 row.setdefault(col, "")
 
         writer.writerow(row)
-        return self._update_cursor(current_cursor, record)
 
     def _finalise_table(self, config: Configuration, table, final_columns: list[str]) -> None:
         existing_columns = set(getattr(table, "column_names", []) or [])
@@ -167,7 +162,7 @@ class Component(ComponentBase):
         self.write_manifest(table)
 
     def _ensure_row_state(self) -> dict[str, Any]:
-        return self.state.setdefault("rows", {}).setdefault(self._state_key(), {})
+        return self.state.setdefault("tables", {}).setdefault(self._state_key(), {})
 
     def _state_key(self) -> str:
         return self.config.destination.table_name or self.config.source.endpoint
@@ -202,39 +197,6 @@ class Component(ComponentBase):
                 return json.dumps(value, ensure_ascii=False)
             case _:
                 return str(value)
-
-    def _update_cursor(self, current: str | None, record: dict[str, Any]) -> str | None:
-        """
-        Extract cursor value from record and return the maximum between current and new.
-
-        Only applies when incremental load is enabled.
-        """
-        if not self.config.destination.incremental:
-            return current
-
-        incremental_field = self.config.source.incremental_field
-        if not incremental_field:
-            return current
-
-        value = record.get(incremental_field)
-        cursor = self._stringify_cursor(value)
-
-        if not cursor:
-            return current
-
-        # Return the latest cursor value
-        return cursor if (current is None or cursor > current) else current
-
-    @staticmethod
-    def _stringify_cursor(value: Any) -> str | None:
-        """Convert cursor value to string, handling datetime and None."""
-        match value:
-            case None:
-                return None
-            case datetime():
-                return value.astimezone(timezone.utc).isoformat()
-            case _:
-                return str(value) or None
 
     @sync_action("testConnection")
     def test_connection(self):
