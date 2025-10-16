@@ -26,7 +26,7 @@ class Source(BaseModel):
 class Destination(BaseModel):
     table_name: str = ""
     load_type: LoadType = Field(default=LoadType.incremental_load)
-    primary_key: list[str] = Field(default_factory=list)
+    primary_key: list[str] = ["id"]
 
     @computed_field
     @property

@@ -55,8 +55,9 @@
         },
         "incremental_field": {
           "type": "string",
+          "default": "lastModifiedDateTime",
           "title": "Incremental Field",
-          "description": "Field to use for incremental loading (e.g. lastModifiedDateTime, systemModifiedAt)",
+          "description": "Field to use for incremental loading",
           "propertyOrder": 4
         },
         "initial_since": {
@@ -101,7 +102,7 @@
         "primary_key": {
           "type": "array",
           "title": "Primary Key",
-          "description": "List of columns that form the primary key (required for incremental load)",
+          "description": "List of columns that form the primary key by default: id",
           "items": {
             "enum": [],
             "type": "string"
