@@ -187,7 +187,7 @@ jobs:
           app_id: ${{ env.KBC_DEVELOPERPORTAL_APP }}
           username: ${{ env.KBC_DEVELOPERPORTAL_USERNAME }}
           password: ${{ secrets.KBC_DEVELOPERPORTAL_PASSWORD }}
-          tag: ${{ needs.push_event_info.outputs.app_image_tag }}
+          tag: ${{ needs.push_event_info.outputs.app_image_tag }}-${{ github.run_number }}
           push_latest: ${{ needs.push_event_info.outputs.is_deploy_ready }}
           source_image: ${{ env.KBC_DEVELOPERPORTAL_APP }}
 
