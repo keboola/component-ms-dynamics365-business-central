@@ -47,6 +47,11 @@
             }
           },
           "propertyOrder": 3
+        },
+        "test_connection": {
+          "type": "button",
+          "format": "test-connection",
+          "propertyOrder": 4
         }
       },
       "propertyOrder": 100
