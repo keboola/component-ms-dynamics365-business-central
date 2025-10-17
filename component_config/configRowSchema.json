@@ -50,7 +50,11 @@
         "filter_expression": {
           "type": "string",
           "title": "Filter Expression",
-          "description": "OData filter expression to limit results (e.g. displayName eq 'John')",
+          "description": "OData filter expression to limit results (e.g. displayName eq 'John') - see <a href='https://docs.oasis-open.org/odata/odata/v4.0/errata03/os/complete/part1-protocol/odata-v4.0-errata03-os-part1-protocol-complete.html#_The_$filter_System'>documentation</a>  for supported operators",
+          "format": "textarea",
+          "options": {
+            "input_height": "100px"
+          },
           "propertyOrder": 3
         },
         "incremental_field": {
@@ -63,7 +67,7 @@
         "initial_since": {
           "type": "string",
           "title": "Initial Since Value",
-          "description": "Starting value for incremental field on first run (e.g. 2024-01-01T00:00:00Z)",
+          "description": "Since which date to download data for the first run (e.g. 2024-01-01T00:00:00Z), following runs will use the last run time stored in the state file.",
           "propertyOrder": 5
         }
       },
