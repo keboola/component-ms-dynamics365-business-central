@@ -65,9 +65,8 @@
         },
         "incremental_field": {
           "type": "string",
-          "default": "lastModifiedDateTime",
           "title": "Incremental Field",
-          "description": "Field to use for incremental loading",
+          "description": "Field to use for incremental loading, for example lastModifiedDateTime",
           "propertyOrder": 5
         },
         "initial_since": {
