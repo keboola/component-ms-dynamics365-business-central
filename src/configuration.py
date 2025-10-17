@@ -21,6 +21,7 @@ class Source(BaseModel):
     filter_expression: str = ""
     incremental_field: str = ""
     initial_since: str = ""
+    custom_url_suffix: str = ""
 
 
 class Destination(BaseModel):

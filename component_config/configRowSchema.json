@@ -57,18 +57,24 @@
           },
           "propertyOrder": 3
         },
+        "custom_url_suffix": {
+          "type": "string",
+          "title": "Custom URL Suffix",
+          "description": "Custom path to append after the endpoint (e.g. 'applyVendorEntries(123)' for endpoints that require IDs in the URL path)",
+          "propertyOrder": 4
+        },
         "incremental_field": {
           "type": "string",
           "default": "lastModifiedDateTime",
           "title": "Incremental Field",
           "description": "Field to use for incremental loading",
-          "propertyOrder": 4
+          "propertyOrder": 5
         },
         "initial_since": {
           "type": "string",
           "title": "Initial Since Value",
           "description": "Since which date to download data for the first run (e.g. 2024-01-01T00:00:00Z), following runs will use the last run time stored in the state file.",
-          "propertyOrder": 5
+          "propertyOrder": 6
         }
       },
       "propertyOrder": 1

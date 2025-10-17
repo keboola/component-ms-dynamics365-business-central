@@ -141,6 +141,7 @@ class DynamicsClient:
         filter_expression: str | None = None,
         incremental_field: str | None = None,
         incremental_value: str | None = None,
+        custom_url_suffix: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """
         Stream records from an endpoint with automatic pagination.
@@ -157,6 +158,7 @@ class DynamicsClient:
                 filter_expression=filter_expression,
                 incremental_field=incremental_field,
                 incremental_value=incremental_value,
+                custom_url_suffix=custom_url_suffix,
                 next_link=next_link,
             )
 
@@ -175,6 +177,7 @@ class DynamicsClient:
         filter_expression: str | None,
         incremental_field: str | None,
         incremental_value: str | None,
+        custom_url_suffix: str | None,
         next_link: str | None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Fetch a single page of data, either from next_link or by building the query."""
@@ -182,7 +185,9 @@ class DynamicsClient:
             # Pagination links are already absolute URLs
             response = self._request("GET", next_link)
         else:
-            url = self._build_url(endpoint, include_company_scope=include_company_scope)
+            url = self._build_url(
+                endpoint, include_company_scope=include_company_scope, custom_url_suffix=custom_url_suffix
+            )
             params = self._build_query_params(
                 selected_columns=selected_columns,
                 filter_expression=filter_expression,
@@ -194,13 +199,16 @@ class DynamicsClient:
         data = response.json()
         return data.get("value", []), data.get("@odata.nextLink")
 
-    def _build_url(self, endpoint: str, include_company_scope: bool = False) -> str:
+    def _build_url(
+        self, endpoint: str, include_company_scope: bool = False, custom_url_suffix: str | None = None
+    ) -> str:
         """
         Build complete API URL for an endpoint.
 
         Args:
             endpoint: Endpoint name (e.g., 'companies', 'itemLedgerEntries')
             include_company_scope: If True, include companies({company_id}) in path
+            custom_url_suffix: Custom suffix to append to the URL (e.g., 'applyVendorEntries(123)')
 
         Returns:
             Complete URL ready to use
@@ -234,6 +242,11 @@ class DynamicsClient:
 
         # Add endpoint
         parts.append(endpoint)
+
+        # Add custom URL suffix if provided
+        if custom_url_suffix:
+            custom_url_suffix = custom_url_suffix.lstrip("/")
+            parts.append(custom_url_suffix)
 
         return "/".join(parts)
 
@@ -360,6 +373,9 @@ class DynamicsClient:
 
         if response.status_code in (401, 403):
             raise DynamicsAuthenticationError(f"Authentication failed: {message}")
+
+        if response.status_code == 400:
+            raise DynamicsClientError(f"Invalid request: {message}")
 
         raise DynamicsClientError(f"API error {response.status_code} at {url}: {message}")
 

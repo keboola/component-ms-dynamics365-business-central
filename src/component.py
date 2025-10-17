@@ -32,12 +32,15 @@ class Component(ComponentBase):
         self.client: DynamicsClient = DynamicsClient(self.config, self.configuration.oauth_credentials, self.state)
 
     def run(self) -> None:
-        rows_written, final_columns = self._extract_rows()
-        self._sync_tokens_if_needed()
-        self._update_row_state(final_columns)
+        try:
+            rows_written, final_columns = self._extract_rows()
+            self._sync_tokens_if_needed()
+            self._update_row_state(final_columns)
 
-        self.write_state_file(self.state)
-        logging.info("Extraction finished. Rows written: %s", rows_written)
+            self.write_state_file(self.state)
+            logging.info("Extraction finished. Rows written: %s", rows_written)
+        except DynamicsClientError as e:
+            raise self._wrap_client_error(e)
 
     def _sync_tokens_if_needed(self) -> None:
         if self.client.tokens_changed:
@@ -84,6 +87,7 @@ class Component(ComponentBase):
             filter_expression=self.config.source.filter_expression or None,
             incremental_field=incremental_field,
             incremental_value=incremental_value,
+            custom_url_suffix=self.config.source.custom_url_suffix or None,
         )
         records_iter = iter(iterator)
         first_record = next(records_iter, None)
@@ -234,7 +238,29 @@ class Component(ComponentBase):
         except DynamicsClientError as exc:
             raise self._wrap_client_error(exc)
 
-        return [SelectElement(value=item["name"], label=item.get("label") or item["name"]) for item in endpoints]
+        filter_required = [
+            "Apply vendor entries",
+            "Contacts information",
+            "Dimension set lines",
+            "Pdf document",
+            "Pictures",
+            "Purchase credit memo lines",
+            "Purchase invoice lines",
+            "Purchase order lines",
+            "Sales credit memo lines",
+            "Sales invoice lines",
+            "Sales order lines",
+            "Sales quote lines",
+            "Time registration entries",
+        ]
+
+        result = []
+        for item in endpoints:
+            label = item.get("label")
+            if label in filter_required:
+                label += " (filter required)"
+            result.append(SelectElement(value=item["name"], label=label))
+        return result
 
     @sync_action("list_columns")
     def list_columns(self):
