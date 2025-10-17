@@ -15,7 +15,7 @@
         "tenant_id": {
           "type": "string",
           "title": "Tenant ID",
-          "description": "Can be found in https://businesscentral.dynamics.com/<tenant_id>/Production",
+          "description": "Can be found in https://businesscentral.dynamics.com/__TENANT_ID__/Production",
           "propertyOrder": 1
         },
         "company_id": {
