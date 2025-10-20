@@ -71,12 +71,8 @@ class Component(ComponentBase):
         if incremental_field:
             incremental_value = last_run or (self.config.source.initial_since or None)
 
-        # Keep column order stable across runs by combining historical and preferred fields.
-        preferred_columns = self._merge_columns(
-            self.config.source.selected_columns,
-            self.config.destination.primary_key,
-            [incremental_field] if incremental_field else None,
-        )
+        # Validate that primary key and incremental field are in selected columns if defined
+        self._validate_column_selection(incremental_field)
 
         logging.info("Starting extraction for endpoint '%s'.", self.config.source.endpoint)
 
@@ -93,7 +89,8 @@ class Component(ComponentBase):
         first_record = next(records_iter, None)
 
         first_record_keys = first_record.keys() if first_record else []
-        base_columns = self._merge_columns(previous_columns, preferred_columns, first_record_keys)
+        preferred_columns = self.config.source.selected_columns or []
+        base_columns = list(dict.fromkeys(chain(previous_columns, preferred_columns, first_record_keys)))
 
         table = self.create_out_table_definition(
             self.config.destination.table_name or self.config.source.endpoint,
@@ -121,9 +118,6 @@ class Component(ComponentBase):
                 total_rows += 1
 
             final_columns = list(writer.fieldnames) if writer.fieldnames else []
-
-        if not final_columns:
-            final_columns = self._merge_columns(previous_columns, preferred_columns)
 
         self._finalise_table(self.config, table, final_columns)
 
@@ -171,16 +165,28 @@ class Component(ComponentBase):
     def _state_key(self) -> str:
         return self.config.destination.table_name or self.config.source.endpoint
 
-    @staticmethod
-    def _merge_columns(*sources: list[str] | None) -> list[str]:
-        """Merge multiple column lists into a deduplicated, order-preserving list."""
-        seen: dict[str, None] = {}
-        for source in sources:
-            if source:
-                for col in source:
-                    if col:
-                        seen.setdefault(col, None)
-        return list(seen)
+    def _validate_column_selection(self, incremental_field: str | None) -> None:
+        """Validate that primary key and incremental field are in selected columns if defined."""
+        selected_columns = self.config.source.selected_columns
+        if not selected_columns:
+            return
+
+        selected_set = set(selected_columns)
+        primary_key = self.config.destination.primary_key
+
+        missing_columns = []
+
+        if primary_key:
+            missing_columns.extend([col for col in primary_key if col not in selected_set])
+
+        if incremental_field and incremental_field not in selected_set:
+            missing_columns.append(incremental_field)
+
+        if missing_columns:
+            raise UserException(
+                f"The following columns are required but not in selected columns: {missing_columns}. "
+                f"Please add them to the column selection."
+            )
 
     def _normalize_record(self, record: dict[str, Any]) -> dict[str, str]:
         """Convert all record values to strings for CSV output."""
