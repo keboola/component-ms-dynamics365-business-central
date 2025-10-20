@@ -11,6 +11,7 @@ from keboola.csvwriter import ElasticDictWriter
 
 from configuration import Configuration
 from dynamics_client import (
+    ENDPOINTS_REQUIRING_FILTERS,
     DynamicsAuthenticationError,
     DynamicsClient,
     DynamicsClientError,
@@ -88,7 +89,7 @@ class Component(ComponentBase):
         records_iter = iter(iterator)
         first_record = next(records_iter, None)
 
-        first_record_keys = first_record.keys() if first_record else []
+        first_record_keys = list(first_record.keys()) if first_record else []
         preferred_columns = self.config.source.selected_columns or []
         base_columns = list(dict.fromkeys(chain(previous_columns, preferred_columns, first_record_keys)))
 
@@ -244,26 +245,10 @@ class Component(ComponentBase):
         except DynamicsClientError as exc:
             raise self._wrap_client_error(exc)
 
-        filter_required = [
-            "Apply vendor entries",
-            "Contacts information",
-            "Dimension set lines",
-            "Pdf document",
-            "Pictures",
-            "Purchase credit memo lines",
-            "Purchase invoice lines",
-            "Purchase order lines",
-            "Sales credit memo lines",
-            "Sales invoice lines",
-            "Sales order lines",
-            "Sales quote lines",
-            "Time registration entries",
-        ]
-
         result = []
         for item in endpoints:
             label = item.get("label")
-            if label in filter_required:
+            if label in ENDPOINTS_REQUIRING_FILTERS:
                 label += " (filter required)"
             result.append(SelectElement(value=item["name"], label=label))
         return result

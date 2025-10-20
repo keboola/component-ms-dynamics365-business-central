@@ -26,6 +26,22 @@ ODATA_NS = {
     "edm": "http://docs.oasis-open.org/odata/ns/edm",
 }
 
+ENDPOINTS_REQUIRING_FILTERS = [
+    "Apply vendor entries",
+    "Contacts information",
+    "Dimension set lines",
+    "Pdf document",
+    "Pictures",
+    "Purchase credit memo lines",
+    "Purchase invoice lines",
+    "Purchase order lines",
+    "Sales credit memo lines",
+    "Sales invoice lines",
+    "Sales order lines",
+    "Sales quote lines",
+    "Time registration entries",
+]
+
 
 class DynamicsClientError(Exception):
     """Base exception for Dynamics 365 Business Central API errors."""
@@ -204,6 +220,7 @@ class DynamicsClient:
     ) -> str:
         """
         Build complete API URL for an endpoint.
+        For example: https://api.businesscentral.dynamics.com/v2.0/-TENANT-ID-/Production/api/v2.0/companies(-COMPANY-ID-)/purchaseOrders
 
         Args:
             endpoint: Endpoint name (e.g., 'companies', 'itemLedgerEntries')
