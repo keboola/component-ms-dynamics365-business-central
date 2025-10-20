@@ -220,7 +220,8 @@ class DynamicsClient:
     ) -> str:
         """
         Build complete API URL for an endpoint.
-        For example: https://api.businesscentral.dynamics.com/v2.0/-TENANT-ID-/Production/api/v2.0/companies(-COMPANY-ID-)/purchaseOrders
+        For example:
+        api.businesscentral.dynamics.com/v2.0/-TENANT-ID-/Production/api/v2.0/companies(-COMPANY-ID-)/purchaseOrders
 
         Args:
             endpoint: Endpoint name (e.g., 'companies', 'itemLedgerEntries')
