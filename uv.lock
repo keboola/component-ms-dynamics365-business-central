@@ -3,35 +3,6 @@ revision = 1
 requires-python = ">=3.13"
 
 [[package]]
-name = "microsoft-dynamics-365-business-central"
-source = { virtual = "." }
-dependencies = [
-    { name = "flake8" },
-    { name = "freezegun" },
-    { name = "keboola-component" },
-    { name = "keboola-http-client" },
-    { name = "keboola-utils" },
-    { name = "mock" },
-    { name = "pydantic" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "flake8", specifier = ">=7.2.0" },
-    { name = "freezegun", specifier = ">=1.5.1" },
-    { name = "keboola-component", specifier = ">=1.6.10" },
-    { name = "keboola-http-client", specifier = ">=1.0.1" },
-    { name = "keboola-utils", specifier = ">=1.1.0" },
-    { name = "mock", specifier = ">=5.2.0" },
-    { name = "pydantic", specifier = ">=2.11.3" },
-    { name = "ruff", specifier = ">=0.11.5" },
-]
-
-[package.metadata.requires-dev]
-dev = []
-
-[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -99,6 +70,36 @@ wheels = [
 ]
 
 [[package]]
+name = "dynamics-365-business-central"
+source = { virtual = "." }
+dependencies = [
+    { name = "flake8" },
+    { name = "freezegun" },
+    { name = "keboola-component" },
+    { name = "keboola-csvwriter" },
+    { name = "keboola-http-client" },
+    { name = "keboola-utils" },
+    { name = "mock" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "flake8", specifier = ">=7.2.0" },
+    { name = "freezegun", specifier = ">=1.5.1" },
+    { name = "keboola-component", specifier = ">=1.6.10" },
+    { name = "keboola-csvwriter", specifier = ">=1.0.1" },
+    { name = "keboola-http-client", specifier = ">=1.0.1" },
+    { name = "keboola-utils", specifier = ">=1.1.0" },
+    { name = "mock", specifier = ">=5.2.0" },
+    { name = "pydantic", specifier = ">=2.11.3" },
+    { name = "requests", specifier = ">=2.32.3" },
+    { name = "ruff", specifier = ">=0.11.5" },
+]
+
+[[package]]
 name = "flake8"
 version = "7.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -145,6 +146,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ef/dd/391f1e6eaae5e925f56f30788c40e38c8bce3a80ee898512e79ced2eabab/keboola.component-1.6.10.tar.gz", hash = "sha256:5f4c347e8e96bb4dff1fe1254217e88754a4edea8a1b147815552335dcfba941", size = 47336 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4c/34/301082c106bff256e2871a5c5db54d691fdad77a9d8a89a52eef30cd18ed/keboola.component-1.6.10-py3-none-any.whl", hash = "sha256:9a13b73beb71373d9a2b456eb44f902cfcfc07747c084bfbfad761b5eaaa4d93", size = 42243 },
+]
+
+[[package]]
+name = "keboola-csvwriter"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/b7/ce1a3530856be8a14a3ee70d2a46393d489fe61daefe9cd14eed9503b17b/keboola.csvwriter-1.0.1.tar.gz", hash = "sha256:2739dbe2808aa8e5e07f09a0183ba72e70af8125bc544ea85680e95331e6b945", size = 4195 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/b7/43acb5e6dfd1968842df1cef38ae66fde09af1e37b83b9a7e56edd37528b/keboola.csvwriter-1.0.1-py3-none-any.whl", hash = "sha256:e20fba3bdfe15a9a08e82f25acc2273fa6632377b5958df8be57a8bbbb57ce34", size = 5695 },
 ]
 
 [[package]]

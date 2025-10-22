@@ -2,16 +2,7 @@
   "storage": {
     "input": {
       "files": [],
-      "tables": [
-        {
-          "source": "in.c-test.test",
-          "destination": "test.csv",
-          "limit": 50,
-          "columns": [],
-          "where_values": [],
-          "where_operator": "eq"
-        }
-      ]
+      "tables": []
     },
     "output": {
       "files": [],
@@ -19,16 +10,30 @@
     }
   },
   "parameters": {
-    "#api_token": "DEMO",
-    "print_hello": true,
-    "period_from": "yesterday",
-    "endpoints": [
-      "deals",
-      "companies"
-    ],
-    "company_properties": "",
-    "deal_properties": "",
-    "debug": true
+    "connection": {
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "environment": "Production",
+      "company_id": "11111111-2222-3333-4444-555555555555"
+    },
+    "source": {
+      "endpoint": "customers",
+      "selected_columns": [
+        "id",
+        "displayName",
+        "lastModifiedDateTime"
+      ],
+      "filter_expression": "status eq 'Active'",
+      "incremental_field": "lastModifiedDateTime",
+      "initial_since": "2024-01-01T00:00:00Z"
+    },
+    "destination": {
+      "table_name": "customers",
+      "load_type": "incremental_load",
+      "primary_key": [
+        "id"
+      ]
+    },
+    "debug": false
   },
   "image_parameters": {
     "syrup_url": "https://syrup.keboola.com/"

@@ -1,1 +1,1 @@
-https://github.com/keboola/component-ms-dynamics365-business-central.git/blob/master/LICENSE.md
+https://github.com/keboola/component-ms-dynamics365/blob/master/LICENSE.md

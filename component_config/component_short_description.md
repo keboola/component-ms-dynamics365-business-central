@@ -1,1 +1,1 @@
-Microsoft Dynamics 365 Business Central short description
+Microsoft Dynamics 365 Business Central is a ERP for small and medium-sized businesses.

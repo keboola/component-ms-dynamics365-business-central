@@ -1,1 +1,142 @@
-{}
+{
+  "type": "object",
+  "title": "Dynamics 365 Business Central Row Configuration",
+  "required": [
+    "source",
+    "destination"
+  ],
+  "properties": {
+    "source": {
+      "type": "object",
+      "title": "Source",
+      "required": [
+        "endpoint"
+      ],
+      "properties": {
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string",
+          "enum": [],
+          "default": "",
+          "format": "select",
+          "description": "API endpoint to extract data from (e.g. customers, items, salesOrders)",
+          "options": {
+            "async": {
+              "label": "Load endpoint",
+              "action": "list_endpoints"
+            }
+          },
+          "propertyOrder": 1
+        },
+        "selected_columns": {
+          "type": "array",
+          "title": "Selected Columns",
+          "description": "Specific columns to extract (leave empty for all columns)",
+          "items": {
+            "enum": [],
+            "type": "string"
+          },
+          "format": "select",
+          "uniqueItems": true,
+          "options": {
+            "tags": true,
+            "async": {
+              "label": "Re-load columns",
+              "action": "list_columns"
+            }
+          },
+          "propertyOrder": 2
+        },
+        "filter_expression": {
+          "type": "string",
+          "title": "Filter Expression",
+          "description": "OData filter expression to limit results (e.g. displayName eq 'John') - see <a href='https://docs.oasis-open.org/odata/odata/v4.0/errata03/os/complete/part1-protocol/odata-v4.0-errata03-os-part1-protocol-complete.html#_The_$filter_System'>documentation</a>  for supported operators",
+          "format": "textarea",
+          "options": {
+            "input_height": "100px"
+          },
+          "propertyOrder": 3
+        },
+        "custom_url_suffix": {
+          "type": "string",
+          "title": "Custom URL Suffix",
+          "description": "Custom path to append after the endpoint (e.g. 'applyVendorEntries(123)' for endpoints that require IDs in the URL path)",
+          "propertyOrder": 4
+        },
+        "incremental_field": {
+          "type": "string",
+          "title": "Incremental Field",
+          "description": "Field to use for incremental loading, for example lastModifiedDateTime",
+          "propertyOrder": 5
+        },
+        "initial_since": {
+          "type": "string",
+          "title": "Initial Since Value",
+          "description": "Since which date to download data for the first run (e.g. 2024-01-01T00:00:00Z), following runs will use the last run time stored in the state file.",
+          "propertyOrder": 6
+        }
+      },
+      "propertyOrder": 1
+    },
+    "destination": {
+      "type": "object",
+      "title": "Destination",
+      "required": [
+        "load_type"
+      ],
+      "properties": {
+        "table_name": {
+          "type": "string",
+          "title": "Table Name",
+          "description": "Name for the output table in Keboola Storage (defaults to endpoint name if empty)",
+          "propertyOrder": 1
+        },
+        "load_type": {
+          "type": "string",
+          "title": "Load Type",
+          "description": "If Full load is used, the destination table will be overwritten every run. If Incremental Load is used, data will be upserted into the destination table based on the primary key.",
+          "enum": [
+            "full_load",
+            "incremental_load"
+          ],
+          "options": {
+            "enum_titles": [
+              "Full Load",
+              "Incremental Load"
+            ]
+          },
+          "default": "incremental_load",
+          "propertyOrder": 2
+        },
+        "primary_key": {
+          "type": "array",
+          "title": "Primary Key",
+          "description": "List of columns that form the primary key by default: id",
+          "items": {
+            "enum": [],
+            "type": "string"
+          },
+          "format": "select",
+          "uniqueItems": true,
+          "options": {
+            "tags": true,
+            "async": {
+              "label": "Re-load columns",
+              "action": "list_columns"
+            }
+          },
+          "propertyOrder": 3
+        }
+      },
+      "propertyOrder": 2
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug Logging",
+      "description": "Enable verbose logging for troubleshooting",
+      "default": false,
+      "format": "checkbox",
+      "propertyOrder": 3
+    }
+  }
+}
