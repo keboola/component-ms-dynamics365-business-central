@@ -185,7 +185,7 @@ class Component(ComponentBase):
 
         if missing_columns:
             raise UserException(
-                f"The following columns are required but not in selected columns: {missing_columns}. "
+                f"The following columns are required but not among the selected columns: {missing_columns}. "
                 f"Please add them to the column selection."
             )
 
