@@ -18,6 +18,7 @@ class Connection(BaseModel):
 class Source(BaseModel):
     endpoint: str = ""
     selected_columns: list[str] = Field(default_factory=list)
+    expand_children: list[str] = Field(default_factory=list)
     filter_expression: str = ""
     incremental_field: str = ""
     initial_since: str = ""

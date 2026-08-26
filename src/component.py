@@ -1,5 +1,6 @@
 import json
 import logging
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any
@@ -75,26 +76,33 @@ class Component(ComponentBase):
         # Validate that primary key and incremental field are in selected columns if defined
         self._validate_column_selection(incremental_field)
 
-        logging.info("Starting extraction for endpoint '%s'.", self.config.source.endpoint)
+        endpoint = self.config.source.endpoint
+        expand_children = list(self.config.source.expand_children or [])
+        child_specs = self._build_child_specs(endpoint, expand_children)
+        child_nav_names = {spec["nav_name"] for spec in child_specs}
+
+        logging.info("Starting extraction for endpoint '%s'.", endpoint)
 
         iterator = self.client.iterate_endpoint(
-            self.config.source.endpoint,
+            endpoint,
             include_company_scope=True,
             selected_columns=self.config.source.selected_columns,
             filter_expression=self.config.source.filter_expression or None,
             incremental_field=incremental_field,
             incremental_value=incremental_value,
             custom_url_suffix=self.config.source.custom_url_suffix or None,
+            expand_children=expand_children or None,
         )
         records_iter = iter(iterator)
         first_record = next(records_iter, None)
 
-        first_record_keys = list(first_record.keys()) if first_record else []
+        # Expanded child collections must not leak into the parent table's columns.
+        first_record_keys = [key for key in (first_record.keys() if first_record else []) if key not in child_nav_names]
         preferred_columns = self.config.source.selected_columns or []
         base_columns = list(dict.fromkeys(chain(previous_columns, preferred_columns, first_record_keys)))
 
         table = self.create_out_table_definition(
-            self.config.destination.table_name or self.config.source.endpoint,
+            self.config.destination.table_name or endpoint,
             incremental=self.config.destination.incremental,
             primary_key=self.config.destination.primary_key or None,
             columns=base_columns or None,
@@ -105,27 +113,41 @@ class Component(ComponentBase):
         has_custom_selection = bool(self.config.source.selected_columns)
         record_stream = chain([first_record], records_iter) if first_record else records_iter
 
-        with ElasticDictWriter(table.full_path, list(base_columns)) as writer:
+        with ExitStack() as stack:
+            writer = stack.enter_context(ElasticDictWriter(table.full_path, list(base_columns)))
             if writer.fieldnames:
                 writer.writeheader()
 
-            for record in record_stream:
-                self._process_record(
-                    writer,
-                    record,
-                    preferred_columns,
-                    has_custom_selection,
+            child_writers = {}
+            for spec in child_specs:
+                child_writer = stack.enter_context(
+                    ElasticDictWriter(spec["table"].full_path, list(spec["initial_columns"]))
                 )
+                if child_writer.fieldnames:
+                    child_writer.writeheader()
+                child_writers[spec["nav_name"]] = child_writer
+
+            for record in record_stream:
+                parent_part, children = self._split_record(record, child_nav_names)
+                self._process_record(writer, parent_part, preferred_columns, has_custom_selection)
                 total_rows += 1
+                self._write_children(child_specs, child_writers, parent_part, children)
 
             final_columns = list(writer.fieldnames) if writer.fieldnames else []
+            for spec in child_specs:
+                spec["final_columns"] = list(child_writers[spec["nav_name"]].fieldnames or [])
 
-        self._finalise_table(self.config, table, final_columns)
+        self._finalise_table(table, final_columns, self.config.destination.primary_key)
+        for spec in child_specs:
+            self._finalise_table(spec["table"], spec["final_columns"], spec["child_pk"])
+            self.state.setdefault("tables", {}).setdefault(spec["table_name"], {})["columns"] = spec["final_columns"]
 
         if total_rows == 0:
-            logging.info("No records returned for endpoint '%s'. Output file left empty.", self.config.source.endpoint)
+            logging.info("No records returned for endpoint '%s'. Output file left empty.", endpoint)
         else:
-            logging.info("Finished endpoint '%s'. Rows written: %s.", self.config.source.endpoint, total_rows)
+            logging.info("Finished endpoint '%s'. Rows written: %s.", endpoint, total_rows)
+        for spec in child_specs:
+            logging.info("Child table '%s': %s rows written.", spec["table_name"], spec["rows"])
 
         return total_rows, final_columns
 
@@ -150,14 +172,109 @@ class Component(ComponentBase):
 
         writer.writerow(row)
 
-    def _finalise_table(self, config: Configuration, table, final_columns: list[str]) -> None:
+    def _build_child_specs(self, endpoint: str, expand_children: list[str]) -> list[dict[str, Any]]:
+        """Resolve the requested child collections into output-table specs.
+
+        Each spec carries its own table definition, the parent foreign-key mapping, and the child
+        primary key (child's own metadata key(s) + the parent FK column(s)).
+        """
+        if not expand_children:
+            return []
+
+        nav_map = {nav["name"]: nav for nav in self.client.list_navigation_properties(endpoint)}
+        parent_keys = self.client.entity_keys(endpoint) or ["id"]
+        # FK column name is fixed as "parent_id" for the common single-key case; composite parent
+        # keys fall back to one "parent_<key>" column each so the mapping stays unambiguous.
+        if len(parent_keys) == 1:
+            fk_map = {"parent_id": parent_keys[0]}
+        else:
+            fk_map = {f"parent_{key}": key for key in parent_keys}
+        fk_cols = list(fk_map.keys())
+
+        specs: list[dict[str, Any]] = []
+        for nav_name in expand_children:
+            nav = nav_map.get(nav_name)
+            if nav is None:
+                raise UserException(
+                    f"'{nav_name}' is not an expandable child collection of endpoint '{endpoint}'. "
+                    f"Available line collections: {sorted(nav_map)}."
+                )
+            own_keys = list(nav.get("keys", []))
+            child_pk = list(dict.fromkeys(own_keys + fk_cols))
+            table_name = f"{endpoint}_{nav_name}"
+            child_state = self.state.setdefault("tables", {}).setdefault(table_name, {})
+            previous_columns = child_state.get("columns", [])
+            initial_columns = list(dict.fromkeys(chain(previous_columns, own_keys, fk_cols)))
+            child_table = self.create_out_table_definition(
+                table_name,
+                incremental=self.config.destination.incremental,
+                primary_key=child_pk or None,
+                columns=initial_columns or None,
+                has_header=True,
+            )
+            specs.append({
+                "nav_name": nav_name,
+                "table_name": table_name,
+                "table": child_table,
+                "fk_map": fk_map,
+                "child_pk": child_pk,
+                "initial_columns": initial_columns,
+                "rows": 0,
+                "final_columns": list(initial_columns),
+            })
+        return specs
+
+    @staticmethod
+    def _split_record(record: dict[str, Any], child_nav_names: set[str]) -> tuple[dict[str, Any], dict[str, list]]:
+        """Split a record into its parent part and its expanded child collections.
+
+        With no expanded children, the original record is returned unchanged (backwards compatible).
+        """
+        if not child_nav_names:
+            return record, {}
+
+        parent: dict[str, Any] = {}
+        children: dict[str, list] = {}
+        for key, value in record.items():
+            if key in child_nav_names:
+                if isinstance(value, list):
+                    children[key] = value
+                elif value:
+                    children[key] = [value]
+                else:
+                    children[key] = []
+            else:
+                parent[key] = value
+        return parent, children
+
+    def _write_children(
+        self,
+        child_specs: list[dict[str, Any]],
+        child_writers: dict[str, Any],
+        parent_part: dict[str, Any],
+        children: dict[str, list],
+    ) -> None:
+        """Write each child collection's rows, injecting the parent foreign key on every row."""
+        for spec in child_specs:
+            nav_name = spec["nav_name"]
+            fk_values = {
+                fk_col: self._stringify_value(parent_part.get(parent_key))
+                for fk_col, parent_key in spec["fk_map"].items()
+            }
+            for child_row in children.get(nav_name, []):
+                normalized_child = self._normalize_record(child_row)
+                normalized_child.update(fk_values)
+                child_writers[nav_name].writerow(normalized_child)
+                spec["rows"] += 1
+
+    def _finalise_table(self, table, final_columns: list[str], primary_key: list[str] | None) -> None:
         existing_columns = set(getattr(table, "column_names", []) or [])
         for column in final_columns:
             if column not in existing_columns:
                 table.add_column(column)
                 existing_columns.add(column)
-        if config.destination.primary_key:
-            table.primary_key = list(config.destination.primary_key)
+        if primary_key:
+            table.primary_key = list(primary_key)
         self.write_manifest(table)
 
     def _ensure_row_state(self) -> dict[str, Any]:
@@ -266,6 +383,20 @@ class Component(ComponentBase):
             raise self._wrap_client_error(exc)
 
         return [SelectElement(value=col["name"], label=self._column_label(col)) for col in columns]
+
+    @sync_action("list_navigation_properties")
+    def list_navigation_properties(self):
+        """Fetch the expandable child collections (line items) of the selected endpoint."""
+        endpoint = self.config.source.endpoint
+        if not endpoint:
+            raise UserException("Select an endpoint before listing related line items.")
+
+        try:
+            navs = self.client.list_navigation_properties(endpoint)
+        except DynamicsClientError as exc:
+            raise self._wrap_client_error(exc)
+
+        return [SelectElement(value=nav["name"], label=nav.get("label") or nav["name"]) for nav in navs]
 
     @staticmethod
     def _column_label(column: dict[str, Any]) -> str:

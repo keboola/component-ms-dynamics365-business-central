@@ -47,6 +47,25 @@
           },
           "propertyOrder": 2
         },
+        "expand_children": {
+          "type": "array",
+          "title": "Include related line items",
+          "description": "Pull the child records belonging to each record of this endpoint into their own table, linked back by the parent's ID. Use this when a '…lines' endpoint shows '(filter required)' and you want the lines for a whole date range instead of filtering invoice-by-invoice. Select the HEADER endpoint above (e.g. Sales invoices), then pick its line collection here (e.g. salesInvoiceLines). The extractor fetches each header with its lines in a single request (OData $expand) and writes a separate <table>_<child> table keyed to the parent. Expanded children include all their fields. Leave empty to extract only this endpoint's own fields (default).",
+          "items": {
+            "enum": [],
+            "type": "string"
+          },
+          "format": "select",
+          "uniqueItems": true,
+          "options": {
+            "tags": true,
+            "async": {
+              "label": "Load related line items",
+              "action": "list_navigation_properties"
+            }
+          },
+          "propertyOrder": 3
+        },
         "filter_expression": {
           "type": "string",
           "title": "Filter Expression",
@@ -55,25 +74,25 @@
           "options": {
             "input_height": "100px"
           },
-          "propertyOrder": 3
+          "propertyOrder": 4
         },
         "custom_url_suffix": {
           "type": "string",
           "title": "Custom URL Suffix",
           "description": "Custom path to append after the endpoint (e.g. 'applyVendorEntries(123)' for endpoints that require IDs in the URL path)",
-          "propertyOrder": 4
+          "propertyOrder": 5
         },
         "incremental_field": {
           "type": "string",
           "title": "Incremental Field",
           "description": "Field to use for incremental loading, for example lastModifiedDateTime",
-          "propertyOrder": 5
+          "propertyOrder": 6
         },
         "initial_since": {
           "type": "string",
           "title": "Initial Since Value",
           "description": "Since which date to download data for the first run (e.g. 2024-01-01T00:00:00Z), following runs will use the last run time stored in the state file.",
-          "propertyOrder": 6
+          "propertyOrder": 7
         }
       },
       "propertyOrder": 1
