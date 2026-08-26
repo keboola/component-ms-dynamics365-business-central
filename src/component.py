@@ -77,7 +77,9 @@ class Component(ComponentBase):
         self._validate_column_selection(incremental_field)
 
         endpoint = self.config.source.endpoint
-        expand_children = list(self.config.source.expand_children or [])
+        # Deduplicate defensively: the UI enforces uniqueItems, but a hand-edited config could repeat
+        # a value, which would otherwise open two writers on the same child-table path.
+        expand_children = list(dict.fromkeys(self.config.source.expand_children or []))
         child_specs = self._build_child_specs(endpoint, expand_children)
         child_nav_names = {spec["nav_name"] for spec in child_specs}
         # The parent key(s) are force-selected when expanding so the child foreign key is populated,
@@ -234,10 +236,11 @@ class Component(ComponentBase):
             if not own_keys:
                 logging.warning(
                     "Child collection '%s' has no resolvable key in metadata; table '%s' will be "
-                    "keyed by 'parent_id' alone, which can collapse multiple lines per parent under "
-                    "incremental load. Consider a full load for this configuration.",
+                    "keyed only by the parent foreign key (%s), which can collapse multiple rows per "
+                    "parent under incremental load. Consider a full load for this configuration.",
                     nav_name,
                     table_name,
+                    ", ".join(fk_cols),
                 )
             child_state = self.state.setdefault("tables", {}).setdefault(table_name, {})
             previous_columns = child_state.get("columns", [])
