@@ -18,6 +18,10 @@ TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
 OAUTH_SCOPE = "https://api.businesscentral.dynamics.com/.default offline_access"
 PAGE_SIZE = 2000
+# When $expand is active every parent inlines its full child collection, so a page of PAGE_SIZE
+# parents can be hundreds of MB - enough to OOM the default 256 MB component container. Cap the
+# number of parents per page far lower in that case; the whole page is still parsed in memory at once.
+EXPAND_PAGE_SIZE = 100
 DEFAULT_TIMEOUT = 60
 
 # OData XML namespaces for metadata parsing
@@ -148,6 +152,27 @@ class DynamicsClient:
         ]
         return sorted(columns, key=lambda c: c["name"].lower())
 
+    def entity_keys(self, endpoint: str) -> list[str]:
+        """Return the OData key column(s) of an endpoint's entity type."""
+        entity = self._get_metadata().get("entity_sets", {}).get(endpoint, {})
+        return list(entity.get("keys", []))
+
+    def list_navigation_properties(self, endpoint: str) -> list[dict[str, Any]]:
+        """Return the collection-valued navigation properties (expandable child collections)
+        of an endpoint, each with its own key column(s)."""
+        metadata = self._get_metadata()
+        entity = metadata.get("entity_sets", {}).get(endpoint)
+
+        if not entity:
+            raise DynamicsClientError(f"Endpoint '{endpoint}' not found in metadata.")
+
+        nav_collections = [
+            {"name": nav["name"], "label": _humanize_label(nav["name"]), "keys": nav.get("keys", [])}
+            for nav in entity.get("nav_collections", [])
+            if nav.get("name")
+        ]
+        return sorted(nav_collections, key=lambda n: n["name"].lower())
+
     def iterate_endpoint(
         self,
         endpoint: str,
@@ -158,12 +183,19 @@ class DynamicsClient:
         incremental_field: str | None = None,
         incremental_value: str | None = None,
         custom_url_suffix: str | None = None,
+        expand_children: list[str] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """
         Stream records from an endpoint with automatic pagination.
 
         Yields clean records (without OData metadata) until all pages are consumed.
+
+        When `expand_children` is set, each parent is fetched with its child collections nested
+        (OData $expand) and the parent key column(s) are force-selected so they survive $select.
         """
+        # Force-select the parent key(s) so the child foreign key value is never dropped by $select.
+        # Fall back to "id" to match the foreign-key source used when building the child tables.
+        required_columns = (self.entity_keys(endpoint) or ["id"]) if expand_children else None
         next_link: str | None = None
 
         while True:
@@ -175,6 +207,8 @@ class DynamicsClient:
                 incremental_field=incremental_field,
                 incremental_value=incremental_value,
                 custom_url_suffix=custom_url_suffix,
+                expand_children=expand_children,
+                required_columns=required_columns,
                 next_link=next_link,
             )
 
@@ -195,11 +229,20 @@ class DynamicsClient:
         incremental_value: str | None,
         custom_url_suffix: str | None,
         next_link: str | None,
+        expand_children: list[str] | None = None,
+        required_columns: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Fetch a single page of data, either from next_link or by building the query."""
+        # Business Central drops @odata.nextLink when $top is present (microsoft/AL#6858), which
+        # silently truncates results to a single page. Server-driven paging via the maxpagesize
+        # preference keeps the nextLink, so the loop below can page through the full result set.
+        # A page of expanded parents is far heavier than flat rows, so use a smaller page then.
+        page_size = EXPAND_PAGE_SIZE if expand_children else PAGE_SIZE
+        page_headers = {"Prefer": f"odata.maxpagesize={page_size}"}
+
         if next_link:
             # Pagination links are already absolute URLs
-            response = self._request("GET", next_link)
+            response = self._request("GET", next_link, extra_headers=page_headers)
         else:
             url = self._build_url(
                 endpoint, include_company_scope=include_company_scope, custom_url_suffix=custom_url_suffix
@@ -209,8 +252,10 @@ class DynamicsClient:
                 filter_expression=filter_expression,
                 incremental_field=incremental_field,
                 incremental_value=incremental_value,
+                expand_children=expand_children,
+                required_columns=required_columns,
             )
-            response = self._request("GET", url, params=params)
+            response = self._request("GET", url, params=params, extra_headers=page_headers)
 
         data = response.json()
         return data.get("value", []), data.get("@odata.nextLink")
@@ -274,6 +319,7 @@ class DynamicsClient:
         url: str,
         *,
         params: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
         retry: bool = True,
     ) -> Response:
         """
@@ -283,9 +329,12 @@ class DynamicsClient:
             method: HTTP method (GET, POST, etc.)
             url: Complete URL (built by _build_url or pagination link)
             params: Query parameters
+            extra_headers: Additional request headers merged on top of the auth headers
             retry: Whether to retry once on 401 after token refresh
         """
         headers = self._build_auth_headers()
+        if extra_headers:
+            headers.update(extra_headers)
 
         logging.debug("%s %s params=%s", method, url, params)
 
@@ -304,7 +353,7 @@ class DynamicsClient:
         if response.status_code == 401 and retry:
             logging.info("Access token expired, refreshing...")
             self._refresh_oauth_token()
-            return self._request(method, url, params=params, retry=False)
+            return self._request(method, url, params=params, extra_headers=extra_headers, retry=False)
 
         # Handle rate limiting
         if response.status_code == 429:
@@ -414,13 +463,25 @@ class DynamicsClient:
         filter_expression: str | None,
         incremental_field: str | None,
         incremental_value: str | None,
+        expand_children: list[str] | None = None,
+        required_columns: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Build OData query parameters for $select, $filter, and $top."""
-        params: dict[str, Any] = {"$top": PAGE_SIZE}
+        """Build OData query parameters for $select, $filter and $expand.
+
+        Note: $top is intentionally NOT set. Business Central omits @odata.nextLink when $top is
+        present, which truncates results to a single page. Page size is controlled by the
+        `Prefer: odata.maxpagesize` header in _fetch_page instead.
+
+        When $select restricts columns, `required_columns` (e.g. the parent key needed as a child
+        foreign key) are force-added so they are never dropped. $select and $expand are independent
+        in OData v4 - expanded children still return all of their own fields.
+        """
+        params: dict[str, Any] = {}
 
         # Add $select if specific columns are requested
         if selected_columns:
             clean_columns = [col.strip() for col in selected_columns if col and col.strip()]
+            clean_columns += [col for col in (required_columns or []) if col]
             if clean_columns:
                 params["$select"] = ",".join(sorted(set(clean_columns)))
 
@@ -433,6 +494,12 @@ class DynamicsClient:
 
         if filters:
             params["$filter"] = " and ".join(filters)
+
+        # Add $expand for requested child collections
+        if expand_children:
+            clean_children = list(dict.fromkeys(c.strip() for c in expand_children if c and c.strip()))
+            if clean_children:
+                params["$expand"] = ",".join(clean_children)
 
         return params
 
@@ -462,12 +529,12 @@ def _parse_odata_metadata(xml_body: str) -> dict[str, Any]:
     entity_types: dict[str, dict[str, Any]] = {}
     entity_sets: dict[str, dict[str, Any]] = {}
 
-    # Parse all schemas
     schemas = root.findall("edmx:DataServices/edm:Schema", namespaces=ODATA_NS)
+
+    # First pass: collect all entity types (across every schema) so navigation-property
+    # targets can be resolved even when they are declared in a different schema.
     for schema in schemas:
         namespace = schema.attrib.get("Namespace", "")
-
-        # Parse entity types (data models)
         for entity_type in schema.findall("edm:EntityType", namespaces=ODATA_NS):
             name = entity_type.attrib.get("Name")
             full_name = f"{namespace}.{name}" if namespace else name
@@ -485,9 +552,21 @@ def _parse_odata_metadata(xml_body: str) -> dict[str, Any]:
                 if key.attrib.get("Name")
             ]
 
-            entity_types[full_name] = {"properties": properties, "keys": keys}
+            # Collection-valued navigation properties are the expandable child collections
+            # (e.g. salesInvoiceLines). Single-valued navs (e.g. customer) are ignored here.
+            nav_collections = []
+            for nav in entity_type.findall("edm:NavigationProperty", namespaces=ODATA_NS):
+                nav_name = nav.attrib.get("Name")
+                nav_type = nav.attrib.get("Type", "")
+                collection_match = re.match(r"Collection\((.+)\)", nav_type)
+                if nav_name and collection_match:
+                    nav_collections.append({"name": nav_name, "target_entity_type": collection_match.group(1)})
 
-        # Parse entity sets (API endpoints)
+            entity_types[full_name] = {"properties": properties, "keys": keys, "nav_collections": nav_collections}
+
+    # Second pass: build entity sets (API endpoints), resolving each collection nav property's
+    # target entity type into its own keys (used for the child table's primary key).
+    for schema in schemas:
         for container in schema.findall("edm:EntityContainer", namespaces=ODATA_NS):
             for entity_set in container.findall("edm:EntitySet", namespaces=ODATA_NS):
                 name = entity_set.attrib.get("Name")
@@ -497,10 +576,19 @@ def _parse_odata_metadata(xml_body: str) -> dict[str, Any]:
                     continue
 
                 entity_info = entity_types.get(entity_type_name, {})
+                nav_collections = [
+                    {
+                        "name": nav["name"],
+                        "target_entity_type": nav["target_entity_type"],
+                        "keys": entity_types.get(nav["target_entity_type"], {}).get("keys", []),
+                    }
+                    for nav in entity_info.get("nav_collections", [])
+                ]
                 entity_sets[name] = {
                     "entity_type": entity_type_name,
                     "properties": entity_info.get("properties", []),
                     "keys": entity_info.get("keys", []),
+                    "nav_collections": nav_collections,
                     "label": _humanize_label(name),
                 }
 
