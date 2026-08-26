@@ -207,6 +207,10 @@ class Component(ComponentBase):
             return []
 
         nav_map = {nav["name"]: nav for nav in self.client.list_navigation_properties(endpoint)}
+        # Child tables are prefixed with the parent's effective output-table name so they stay
+        # consistent with a custom destination.table_name and two rows expanding the same endpoint
+        # into differently-named parents don't collide on the same child table name.
+        parent_table = self.config.destination.table_name or endpoint
         parent_keys = self.client.entity_keys(endpoint) or ["id"]
         # FK column name is fixed as "parent_id" for the common single-key case; composite parent
         # keys fall back to one "parent_<key>" column each so the mapping stays unambiguous.
@@ -226,7 +230,7 @@ class Component(ComponentBase):
                 )
             own_keys = list(nav.get("keys", []))
             child_pk = list(dict.fromkeys(own_keys + fk_cols))
-            table_name = f"{endpoint}_{nav_name}"
+            table_name = f"{parent_table}_{nav_name}"
             if not own_keys:
                 logging.warning(
                     "Child collection '%s' has no resolvable key in metadata; table '%s' will be "

@@ -59,7 +59,7 @@
           "uniqueItems": true,
           "options": {
             "tags": true,
-            "tooltip": "Pulls the selected related collections of each record (line items, attachments, dimension sets, …) into a separate `<endpoint>_<child>` table (e.g. `salesInvoices_salesInvoiceLines`), linked back by a `parent_id` column. Each record is fetched together with these collections in one request (OData `$expand`), and they include all their fields. Handy for child data such as `…lines` endpoints marked *(filter required)*, which you can then get for a whole date range instead of filtering record-by-record. Leave empty to extract only this endpoint's own fields.",
+            "tooltip": "Pulls the selected related collections of each record (line items, attachments, dimension sets, …) into a separate `<table>_<child>` table — the parent table name plus the collection, e.g. `salesInvoices_salesInvoiceLines` — linked back by a `parent_id` column. Each record is fetched together with these collections in one request (OData `$expand`), and they include all their fields. Handy for child data such as `…lines` endpoints marked *(filter required)*, which you can then get for a whole date range instead of filtering record-by-record. Leave empty to extract only this endpoint's own fields.",
             "async": {
               "label": "Load properties",
               "action": "list_navigation_properties"

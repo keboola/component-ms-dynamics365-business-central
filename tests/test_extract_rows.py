@@ -170,6 +170,24 @@ class ExtractRowsTest(ComponentTestBase):
             [{"id": "l1", "sequence": "1", "parent_id": "inv1"}],
         )
 
+    def test_child_table_prefixed_with_custom_parent_table_name(self):
+        """Child tables follow the parent's effective output-table name, not the raw endpoint, so a
+        custom destination.table_name keeps parent and children consistent (and avoids collisions)."""
+        params = {
+            "connection": {"tenant_id": "T", "environment": "Production", "company_id": "C"},
+            "source": {"endpoint": "salesInvoices", "expand_children": ["salesInvoiceLines"]},
+            "destination": {"table_name": "my_invoices", "load_type": "full_load", "primary_key": ["id"]},
+        }
+        records = [{"id": "inv1", "number": "S-1", "salesInvoiceLines": [{"id": "l1", "sequence": 1}]}]
+        nav = [{"name": "salesInvoiceLines", "label": "Sales invoice lines", "keys": ["id"]}]
+        self._run(params, FakeClient(records, nav_props=nav, keys=["id"]))
+
+        self.assertEqual(self._out_tables(), ["my_invoices", "my_invoices_salesInvoiceLines"])
+        self.assertEqual(
+            self._read_table("my_invoices_salesInvoiceLines"),
+            [{"id": "l1", "sequence": "1", "parent_id": "inv1"}],
+        )
+
     # --- expanded-collection truncation signal ----------------------------------
 
     def test_nested_odata_nextlink_not_leaked_and_warns(self):

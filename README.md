@@ -44,10 +44,18 @@ Output
 Provides a list of tables, foreign keys, and schema.
 
 When **Expand Properties** is used, each selected related collection is written to its own
-`<endpoint>_<child>` table (e.g. `salesInvoices_salesInvoiceLines`). Every child row carries a
-`parent_id` column referencing the parent record's ID, and the child table's primary key combines
-the child's own key(s) with `parent_id`. The parent table keeps only its own fields (no nested
-line-item column).
+`<table>_<child>` table — the parent table name (the endpoint name, or `Table Name` if set) plus the
+collection, e.g. `salesInvoices_salesInvoiceLines`. Every child row carries a `parent_id` column
+referencing the parent record's ID, and the child table's primary key combines the child's own
+key(s) with `parent_id`. The parent table keeps only its own fields (no nested line-item column).
+
+Notes:
+- Under **Incremental Load**, child tables are upserted by their primary key and are only refreshed
+  when their parent record changes; a line removed from a parent is not deleted from the child table
+  (use Full Load if you need deletions reflected).
+- If Business Central returns only part of a record's expanded collection (a nested
+  `@odata.nextLink`), the run logs a warning and that child table may be incomplete for that record —
+  narrow the run so each record's collection fits one page.
 
 Development
 -----------

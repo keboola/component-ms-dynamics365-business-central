@@ -194,7 +194,8 @@ class DynamicsClient:
         (OData $expand) and the parent key column(s) are force-selected so they survive $select.
         """
         # Force-select the parent key(s) so the child foreign key value is never dropped by $select.
-        required_columns = self.entity_keys(endpoint) if expand_children else None
+        # Fall back to "id" to match the foreign-key source used when building the child tables.
+        required_columns = (self.entity_keys(endpoint) or ["id"]) if expand_children else None
         next_link: str | None = None
 
         while True:
