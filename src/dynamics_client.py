@@ -18,6 +18,10 @@ TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 
 OAUTH_SCOPE = "https://api.businesscentral.dynamics.com/.default offline_access"
 PAGE_SIZE = 2000
+# When $expand is active every parent inlines its full child collection, so a page of PAGE_SIZE
+# parents can be hundreds of MB - enough to OOM the default 256 MB component container. Cap the
+# number of parents per page far lower in that case; the whole page is still parsed in memory at once.
+EXPAND_PAGE_SIZE = 100
 DEFAULT_TIMEOUT = 60
 
 # OData XML namespaces for metadata parsing
@@ -231,7 +235,9 @@ class DynamicsClient:
         # Business Central drops @odata.nextLink when $top is present (microsoft/AL#6858), which
         # silently truncates results to a single page. Server-driven paging via the maxpagesize
         # preference keeps the nextLink, so the loop below can page through the full result set.
-        page_headers = {"Prefer": f"odata.maxpagesize={PAGE_SIZE}"}
+        # A page of expanded parents is far heavier than flat rows, so use a smaller page then.
+        page_size = EXPAND_PAGE_SIZE if expand_children else PAGE_SIZE
+        page_headers = {"Prefer": f"odata.maxpagesize={page_size}"}
 
         if next_link:
             # Pagination links are already absolute URLs

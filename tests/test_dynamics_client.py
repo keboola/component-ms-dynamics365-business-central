@@ -146,6 +146,16 @@ class ExpandQueryTest(unittest.TestCase):
         params = m.call_args_list[0].kwargs["params"]
         self.assertEqual(params["$expand"], "salesInvoiceLines,dimensionSetLines")
         self.assertEqual(set(params["$select"].split(",")), {"number", "id"})
+        # Expanded pages are heavy, so a smaller maxpagesize is used to stay within memory.
+        self.assertEqual(m.call_args_list[0].kwargs["headers"]["Prefer"], "odata.maxpagesize=100")
+
+    def test_expand_uses_smaller_page_size_than_flat(self):
+        client = make_client()
+        client._metadata_cache = _parse_odata_metadata(METADATA_XML)
+        with mock.patch.object(client.session, "request", return_value=fake_response({"value": []})) as m:
+            list(client.iterate_endpoint("customers"))
+        # No expand -> full page size.
+        self.assertEqual(m.call_args_list[0].kwargs["headers"]["Prefer"], "odata.maxpagesize=2000")
 
     def test_incremental_filter_and_expand_coexist(self):
         """Incremental parent load keeps working; children ride along via $expand."""
