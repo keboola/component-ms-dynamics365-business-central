@@ -49,8 +49,8 @@
         },
         "expand_children": {
           "type": "array",
-          "title": "Include related line items",
-          "description": "Pull the child records belonging to each record of this endpoint into their own table, linked back by the parent's ID. Use this when a '…lines' endpoint shows '(filter required)' and you want the lines for a whole date range instead of filtering invoice-by-invoice. Select the HEADER endpoint above (e.g. Sales invoices), then pick its line collection here (e.g. salesInvoiceLines). The extractor fetches each header with its lines in a single request (OData $expand) and writes a separate <endpoint>_<child> table (e.g. salesInvoices_salesInvoiceLines) keyed to the parent by a parent_id column. Expanded children include all their fields. Leave empty to extract only this endpoint's own fields (default).",
+          "title": "Related Line Items",
+          "description": "Line-item collections to pull into their own tables",
           "items": {
             "enum": [],
             "type": "string"
@@ -59,8 +59,9 @@
           "uniqueItems": true,
           "options": {
             "tags": true,
+            "tooltip": "Pulls the child records of each record into a separate `<endpoint>_<child>` table (e.g. `salesInvoices_salesInvoiceLines`), linked back by a `parent_id` column. Use this when a `…lines` endpoint shows *(filter required)* and you want the lines for a whole date range instead of filtering record-by-record. Each header is fetched together with its lines in one request (OData `$expand`), and expanded children include all their fields. Leave empty to extract only this endpoint's own fields.",
             "async": {
-              "label": "Load related line items",
+              "label": "Load line items",
               "action": "list_navigation_properties"
             }
           },
