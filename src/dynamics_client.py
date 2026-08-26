@@ -197,9 +197,14 @@ class DynamicsClient:
         next_link: str | None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Fetch a single page of data, either from next_link or by building the query."""
+        # Business Central drops @odata.nextLink when $top is present (microsoft/AL#6858), which
+        # silently truncates results to a single page. Server-driven paging via the maxpagesize
+        # preference keeps the nextLink, so the loop below can page through the full result set.
+        page_headers = {"Prefer": f"odata.maxpagesize={PAGE_SIZE}"}
+
         if next_link:
             # Pagination links are already absolute URLs
-            response = self._request("GET", next_link)
+            response = self._request("GET", next_link, extra_headers=page_headers)
         else:
             url = self._build_url(
                 endpoint, include_company_scope=include_company_scope, custom_url_suffix=custom_url_suffix
@@ -210,7 +215,7 @@ class DynamicsClient:
                 incremental_field=incremental_field,
                 incremental_value=incremental_value,
             )
-            response = self._request("GET", url, params=params)
+            response = self._request("GET", url, params=params, extra_headers=page_headers)
 
         data = response.json()
         return data.get("value", []), data.get("@odata.nextLink")
@@ -274,6 +279,7 @@ class DynamicsClient:
         url: str,
         *,
         params: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
         retry: bool = True,
     ) -> Response:
         """
@@ -283,9 +289,12 @@ class DynamicsClient:
             method: HTTP method (GET, POST, etc.)
             url: Complete URL (built by _build_url or pagination link)
             params: Query parameters
+            extra_headers: Additional request headers merged on top of the auth headers
             retry: Whether to retry once on 401 after token refresh
         """
         headers = self._build_auth_headers()
+        if extra_headers:
+            headers.update(extra_headers)
 
         logging.debug("%s %s params=%s", method, url, params)
 
@@ -304,7 +313,7 @@ class DynamicsClient:
         if response.status_code == 401 and retry:
             logging.info("Access token expired, refreshing...")
             self._refresh_oauth_token()
-            return self._request(method, url, params=params, retry=False)
+            return self._request(method, url, params=params, extra_headers=extra_headers, retry=False)
 
         # Handle rate limiting
         if response.status_code == 429:
@@ -415,8 +424,13 @@ class DynamicsClient:
         incremental_field: str | None,
         incremental_value: str | None,
     ) -> dict[str, Any]:
-        """Build OData query parameters for $select, $filter, and $top."""
-        params: dict[str, Any] = {"$top": PAGE_SIZE}
+        """Build OData query parameters for $select and $filter.
+
+        Note: $top is intentionally NOT set. Business Central omits @odata.nextLink when $top is
+        present, which truncates results to a single page. Page size is controlled by the
+        `Prefer: odata.maxpagesize` header in _fetch_page instead.
+        """
+        params: dict[str, Any] = {}
 
         # Add $select if specific columns are requested
         if selected_columns:
