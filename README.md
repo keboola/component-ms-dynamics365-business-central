@@ -25,7 +25,7 @@ Configuration
 The component supports the following data selection options:
 - **Endpoint**: Select from available API endpoints (customers, items, salesOrders, etc.)
 - **Selected Columns**: Choose specific columns or extract all available columns
-- **Include related line items**: Optionally pull a header endpoint's child collections (line items) into their own tables using OData `$expand`. Select the header endpoint (e.g. `salesInvoices`), then pick its line collection(s) here (e.g. `salesInvoiceLines`). Each header is fetched together with its lines in a single request, and the lines are written to a separate `<endpoint>_<child>` table keyed back to the parent via a `parent_id` column. This is the supported way to extract `…lines` endpoints marked "(filter required)" for a whole date range instead of filtering invoice-by-invoice. Leave empty (default) to extract only this endpoint's own fields.
+- **Expand Properties**: Optionally pull a record's related collections (line items, attachments, dimension sets, …) into their own tables using OData `$expand`. Select the endpoint (e.g. `salesInvoices`), then pick its related collection(s) here (e.g. `salesInvoiceLines`, `dimensionSetLines`). Each record is fetched together with these collections in a single request, and each collection is written to a separate `<endpoint>_<child>` table keyed back to the parent via a `parent_id` column. This is the supported way to extract child data such as `…lines` endpoints marked "(filter required)" for a whole date range instead of filtering record-by-record. Leave empty (default) to extract only this endpoint's own fields.
 - **Filter Expression**: Apply OData filter expressions to limit results (e.g., `displayName eq 'John'`)
 - **Incremental Field**: Specify a datetime field for incremental data extraction
 - **Initial Since Value**: Value used for the initial load
@@ -43,7 +43,7 @@ Output
 
 Provides a list of tables, foreign keys, and schema.
 
-When **Include related line items** is used, each selected child collection is written to its own
+When **Expand Properties** is used, each selected related collection is written to its own
 `<endpoint>_<child>` table (e.g. `salesInvoices_salesInvoiceLines`). Every child row carries a
 `parent_id` column referencing the parent record's ID, and the child table's primary key combines
 the child's own key(s) with `parent_id`. The parent table keeps only its own fields (no nested
