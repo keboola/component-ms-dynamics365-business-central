@@ -47,7 +47,13 @@ class FakeClient:
         return list(self._nav_props)
 
 
-class ExtractRowsTest(unittest.TestCase):
+class ComponentTestBase(unittest.TestCase):
+    """Shared harness - builds a Component over a temp KBC_DATADIR with an injected fake client.
+
+    Holds no tests itself, so the concrete test classes below don't inherit (and re-run) each
+    other's cases.
+    """
+
     def setUp(self):
         self.datadir = tempfile.mkdtemp()
         for sub in ("in/tables", "in/files", "out/tables", "out/files"):
@@ -70,8 +76,8 @@ class ExtractRowsTest(unittest.TestCase):
             return comp
 
     def _run(self, parameters, fake_client):
-        comp = self._component(parameters, fake_client)
-        comp.run()
+        # Component() reconfigures root logging in __init__, so build it before any assertLogs block.
+        self._component(parameters, fake_client).run()
 
     def _out_tables(self):
         tables_dir = Path(self.datadir) / "out" / "tables"
@@ -89,6 +95,8 @@ class ExtractRowsTest(unittest.TestCase):
         schema = self._read_manifest(name)["schema"]
         return [col["name"] for col in schema if col.get("primary_key")]
 
+
+class ExtractRowsTest(ComponentTestBase):
     # --- backwards compatibility -------------------------------------------------
 
     def test_no_expand_regression(self):
@@ -136,6 +144,53 @@ class ExtractRowsTest(unittest.TestCase):
         ])
         self.assertEqual(set(self._primary_key("salesInvoices_salesInvoiceLines")), {"id", "parent_id"})
 
+    # --- expanded-collection truncation signal ----------------------------------
+
+    def test_nested_odata_nextlink_not_leaked_and_warns(self):
+        """A nested `<nav>@odata.nextLink` (BC truncated the child collection) must not pollute the
+        parent table and must raise a warning rather than silently drop lines."""
+        params = {
+            "connection": {"tenant_id": "T", "environment": "Production", "company_id": "C"},
+            "source": {"endpoint": "salesInvoices", "expand_children": ["salesInvoiceLines"]},
+            "destination": {"table_name": "", "load_type": "full_load", "primary_key": ["id"]},
+        }
+        records = [{
+            "id": "inv1", "number": "S-1",
+            "salesInvoiceLines": [{"id": "l1", "sequence": 1}],
+            "salesInvoiceLines@odata.nextLink": "https://api/.../salesInvoiceLines?$skiptoken=x",
+        }]
+        nav = [{"name": "salesInvoiceLines", "label": "Sales invoice lines", "keys": ["id"]}]
+
+        comp = self._component(params, FakeClient(records, nav_props=nav, keys=["id"]))
+        with self.assertLogs(level="WARNING") as logs:
+            comp.run()
+
+        parent_rows = self._read_table("salesInvoices")
+        self.assertEqual(parent_rows, [{"id": "inv1", "number": "S-1"}])
+        self.assertNotIn("salesInvoiceLines@odata.nextLink", parent_rows[0])
+        self.assertEqual(
+            self._read_table("salesInvoices_salesInvoiceLines"),
+            [{"id": "l1", "sequence": "1", "parent_id": "inv1"}],
+        )
+        self.assertTrue(any("truncat" in line.lower() for line in logs.output))
+
+    def test_child_without_own_key_warns(self):
+        """A child collection with no resolvable metadata key would dedupe to parent_id only."""
+        params = {
+            "connection": {"tenant_id": "T", "environment": "Production", "company_id": "C"},
+            "source": {"endpoint": "salesInvoices", "expand_children": ["extraLines"]},
+            "destination": {"table_name": "", "load_type": "incremental_load", "primary_key": ["id"]},
+        }
+        records = [{"id": "inv1", "number": "S-1", "extraLines": [{"foo": "bar"}]}]
+        nav = [{"name": "extraLines", "label": "Extra lines", "keys": []}]
+
+        comp = self._component(params, FakeClient(records, nav_props=nav, keys=["id"]))
+        with self.assertLogs(level="WARNING") as logs:
+            comp.run()
+
+        self.assertEqual(self._primary_key("salesInvoices_extraLines"), ["parent_id"])
+        self.assertTrue(any("parent_id" in line for line in logs.output))
+
     # --- multi child expand ------------------------------------------------------
 
     def test_multi_child_expand(self):
@@ -168,7 +223,7 @@ class ExtractRowsTest(unittest.TestCase):
         self.assertEqual(dims, [{"id": "d1", "code": "DEPT", "parent_id": "inv1"}])
 
 
-class SyncActionTest(ExtractRowsTest):
+class SyncActionTest(ComponentTestBase):
     def test_list_navigation_properties_returns_collection_navs(self):
         params = {
             "connection": {"tenant_id": "T", "environment": "Production", "company_id": "C"},

@@ -96,8 +96,14 @@ class Component(ComponentBase):
         records_iter = iter(iterator)
         first_record = next(records_iter, None)
 
-        # Expanded child collections must not leak into the parent table's columns.
-        first_record_keys = [key for key in (first_record.keys() if first_record else []) if key not in child_nav_names]
+        # Expanded child collections (and their nested @odata.* annotations) must not leak into the
+        # parent table's columns. "@odata." never matches a real field - top-level control fields are
+        # already stripped upstream, so this is a no-op when nothing is expanded.
+        first_record_keys = [
+            key
+            for key in (first_record.keys() if first_record else [])
+            if key not in child_nav_names and "@odata." not in key
+        ]
         preferred_columns = self.config.source.selected_columns or []
         base_columns = list(dict.fromkeys(chain(previous_columns, preferred_columns, first_record_keys)))
 
@@ -127,11 +133,13 @@ class Component(ComponentBase):
                     child_writer.writeheader()
                 child_writers[spec["nav_name"]] = child_writer
 
+            truncated_children: set[str] = set()
             for record in record_stream:
-                parent_part, children = self._split_record(record, child_nav_names)
+                parent_part, children, truncated = self._split_record(record, child_nav_names)
                 self._process_record(writer, parent_part, preferred_columns, has_custom_selection)
                 total_rows += 1
                 self._write_children(child_specs, child_writers, parent_part, children)
+                truncated_children |= truncated
 
             final_columns = list(writer.fieldnames) if writer.fieldnames else []
             for spec in child_specs:
@@ -148,6 +156,15 @@ class Component(ComponentBase):
             logging.info("Finished endpoint '%s'. Rows written: %s.", endpoint, total_rows)
         for spec in child_specs:
             logging.info("Child table '%s': %s rows written.", spec["table_name"], spec["rows"])
+
+        for nav_name in sorted(truncated_children):
+            logging.warning(
+                "Business Central truncated the expanded '%s' collection for one or more parent "
+                "records (nested @odata.nextLink present); table '%s' may be missing rows. Narrow "
+                "the run (e.g. a shorter incremental window) so each parent's lines fit one page.",
+                nav_name,
+                f"{endpoint}_{nav_name}",
+            )
 
         return total_rows, final_columns
 
@@ -202,6 +219,14 @@ class Component(ComponentBase):
             own_keys = list(nav.get("keys", []))
             child_pk = list(dict.fromkeys(own_keys + fk_cols))
             table_name = f"{endpoint}_{nav_name}"
+            if not own_keys:
+                logging.warning(
+                    "Child collection '%s' has no resolvable key in metadata; table '%s' will be "
+                    "keyed by 'parent_id' alone, which can collapse multiple lines per parent under "
+                    "incremental load. Consider a full load for this configuration.",
+                    nav_name,
+                    table_name,
+                )
             child_state = self.state.setdefault("tables", {}).setdefault(table_name, {})
             previous_columns = child_state.get("columns", [])
             initial_columns = list(dict.fromkeys(chain(previous_columns, own_keys, fk_cols)))
@@ -225,16 +250,25 @@ class Component(ComponentBase):
         return specs
 
     @staticmethod
-    def _split_record(record: dict[str, Any], child_nav_names: set[str]) -> tuple[dict[str, Any], dict[str, list]]:
-        """Split a record into its parent part and its expanded child collections.
+    def _split_record(
+        record: dict[str, Any], child_nav_names: set[str]
+    ) -> tuple[dict[str, Any], dict[str, list], set[str]]:
+        """Split a record into its parent part, its expanded child collections, and the set of
+        children that Business Central truncated.
 
         With no expanded children, the original record is returned unchanged (backwards compatible).
+
+        Expanded collections carry nested OData annotations keyed as ``<nav>@odata.*`` (e.g.
+        ``salesInvoiceLines@odata.nextLink``). These do NOT start with ``@odata.`` so they survive
+        _strip_odata_metadata; they must be kept out of the parent table, and a nested
+        ``@odata.nextLink`` is the reliable signal that BC returned only part of that child collection.
         """
         if not child_nav_names:
-            return record, {}
+            return record, {}, set()
 
         parent: dict[str, Any] = {}
         children: dict[str, list] = {}
+        truncated: set[str] = set()
         for key, value in record.items():
             if key in child_nav_names:
                 if isinstance(value, list):
@@ -243,9 +277,14 @@ class Component(ComponentBase):
                     children[key] = [value]
                 else:
                     children[key] = []
+            elif "@odata." in key:
+                # Nested expansion annotation - never belongs in the parent table.
+                nav = key.split("@", 1)[0]
+                if nav in child_nav_names and key.endswith("@odata.nextLink"):
+                    truncated.add(nav)
             else:
                 parent[key] = value
-        return parent, children
+        return parent, children, truncated
 
     def _write_children(
         self,
