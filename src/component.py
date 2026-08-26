@@ -80,6 +80,9 @@ class Component(ComponentBase):
         expand_children = list(self.config.source.expand_children or [])
         child_specs = self._build_child_specs(endpoint, expand_children)
         child_nav_names = {spec["nav_name"] for spec in child_specs}
+        # The parent key(s) are force-selected when expanding so the child foreign key is populated,
+        # even if the user didn't pick them - but they must not surface as empty parent columns.
+        parent_keys = self.client.entity_keys(endpoint) if expand_children else []
 
         logging.info("Starting extraction for endpoint '%s'.", endpoint)
 
@@ -106,6 +109,11 @@ class Component(ComponentBase):
         ]
         preferred_columns = self.config.source.selected_columns or []
         base_columns = list(dict.fromkeys(chain(previous_columns, preferred_columns, first_record_keys)))
+        if preferred_columns:
+            # Custom selection: the parent table shows only what the user chose. Drop parent keys that
+            # were force-selected solely to feed the child foreign key (they'd be empty columns here).
+            forced_only = set(parent_keys) - set(preferred_columns)
+            base_columns = [col for col in base_columns if col not in forced_only]
 
         table = self.create_out_table_definition(
             self.config.destination.table_name or endpoint,

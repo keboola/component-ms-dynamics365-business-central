@@ -144,6 +144,32 @@ class ExtractRowsTest(ComponentTestBase):
         ])
         self.assertEqual(set(self._primary_key("salesInvoices_salesInvoiceLines")), {"id", "parent_id"})
 
+    def test_forced_parent_key_not_leaked_into_restricted_parent(self):
+        """With a custom column selection, the parent key force-selected for the child FK must not
+        appear as an empty column on the parent table - but the child FK still gets the real value."""
+        params = {
+            "connection": {"tenant_id": "T", "environment": "Production", "company_id": "C"},
+            "source": {
+                "endpoint": "salesInvoices",
+                "selected_columns": ["number"],
+                "expand_children": ["salesInvoiceLines"],
+            },
+            "destination": {"table_name": "", "load_type": "full_load", "primary_key": ["number"]},
+        }
+        # FakeClient yields id even though the user didn't select it (mirrors the real force-select).
+        records = [{"id": "inv1", "number": "S-1", "salesInvoiceLines": [{"id": "l1", "sequence": 1}]}]
+        nav = [{"name": "salesInvoiceLines", "label": "Sales invoice lines", "keys": ["id"]}]
+        self._run(params, FakeClient(records, nav_props=nav, keys=["id"]))
+
+        parent_rows = self._read_table("salesInvoices")
+        self.assertEqual(parent_rows, [{"number": "S-1"}])
+        self.assertNotIn("id", parent_rows[0])
+        # child FK is still populated from the (unrestricted) parent record
+        self.assertEqual(
+            self._read_table("salesInvoices_salesInvoiceLines"),
+            [{"id": "l1", "sequence": "1", "parent_id": "inv1"}],
+        )
+
     # --- expanded-collection truncation signal ----------------------------------
 
     def test_nested_odata_nextlink_not_leaked_and_warns(self):
