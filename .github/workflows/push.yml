@@ -63,8 +63,17 @@ jobs:
       - name: Set image tag
         id: tag
         run: |
-          TAG="${GITHUB_REF##*/}"
-          IS_SEMANTIC_TAG=$(echo "$TAG" | grep -q '^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$' && echo true || echo false)
+          REF="${GITHUB_REF##*/}"
+          # Matches the standard keboola/component-ci convention: branch builds get a unique
+          # per-run image tag (<branch>-<run_number>) so cross-stack image replication never has to
+          # replace a tag in place (which can lag and serve a stale image to a pinned runtime.tag).
+          # Git tags keep their exact name so the semantic-version release/deploy path is unchanged.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="$REF"
+          else
+            TAG="$REF-${{ github.run_number }}"
+          fi
+          IS_SEMANTIC_TAG=$(echo "$REF" | grep -q '^v\?[0-9]\+\.[0-9]\+\.[0-9]\+$' && echo true || echo false)
           echo "is_semantic_tag=$IS_SEMANTIC_TAG" | tee -a $GITHUB_OUTPUT
           echo "app_image_tag=$TAG" | tee -a $GITHUB_OUTPUT
 
